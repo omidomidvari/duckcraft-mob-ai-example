@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>3D Block Maze with Thinking Pathfinding</title>
+<style>
+  body { margin: 0; overflow: hidden; background: #222; }
+  #ui {
+    position: absolute; top: 10px; left: 10px;
+    background: rgba(255,255,255,0.8); padding: 10px; border-radius: 5px;
+    font-family: sans-serif;
+  }
+  button { margin-top: 5px; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <p>Click to place/remove blue blocks</p>
+  <button id="findPath">Find Path</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
+
+<script>
+/* ====== CONFIG ====== */
+const GRID_SIZE = 10;
+const BLOCK_SIZE = 1;
+const COLORS = {
+  air: 0xcccccc,
+  wall: 0x0000ff,
+  start: 0xffff00,
+  goal: 0x00ff00,
+  visited: 0xffa500, // orange for thinking
+  path: 0xff00ff     // magenta for final path
+};
+
+/* ====== SCENE SETUP ====== */
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({antialias: true});
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const light = new THREE.AmbientLight(0xffffff, 1);
+scene.add(light);
+
+/* ====== GRID DATA ====== */
+let grid = [];
+for (let y = 0; y < GRID_SIZE; y++) {
+  grid[y] = [];
+  for (let x = 0; x < GRID_SIZE; x++) {
+    grid[y][x] = 'air';
+  }
+}
+
+let startPos = {x: 0, y: 0};
+let goalPos = {x: GRID_SIZE - 1, y: GRID_SIZE - 1};
+grid[startPos.y][startPos.x] = 'start';
+grid[goalPos.y][goalPos.x] = 'goal';
+
+/* ====== MESH STORAGE ====== */
+let cubes = [];
+
+/* ====== FUNCTIONS ====== */
+function createGridMeshes() {
+  cubes.forEach(c => scene.remove(c));
+  cubes = [];
+
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      let color = COLORS[grid[y][x]] || COLORS.air;
+      const geometry = new THREE.BoxGeometry(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+      const material = new THREE.MeshLambertMaterial({color});
+      const cube = new THREE.Mesh(geometry, material);
+      cube.position.set(x * BLOCK_SIZE, 0, y * BLOCK_SIZE);
+      cube.userData = {x, y};
+      scene.add(cube);
+      cubes.push(cube);
+    }
+  }
+}
+
+function toggleWall(x, y) {
+  if (grid[y][x] === 'air') grid[y][x] = 'wall';
+  else if (grid[y][x] === 'wall') grid[y][x] = 'air';
+  createGridMeshes();
+}
+
+function highlightPath(path) {
+  path.forEach(p => {
+    if (grid[p.y][p.x] === 'air' || grid[p.y][p.x] === 'visited') {
+      grid[p.y][p.x] = 'path';
+    }
+  });
+  createGridMeshes();
+}
+
+/* ====== STEP-BY-STEP BFS ====== */
+function bfsStepByStep() {
+  let visited = Array.from({length: GRID_SIZE}, () => Array(GRID_SIZE).fill(false));
+  let queue = [{x: startPos.x, y: startPos.y, path: []}];
+  visited[startPos.y][startPos.x] = true;
+
+  const dirs = [
+    {dx: 1, dy: 0}, {dx: -1, dy: 0},
+    {dx: 0, dy: 1}, {dx: 0, dy: -1}
+  ];
+
+  let interval = setInterval(() => {
+    if (queue.length === 0) {
+      clearInterval(interval);
+      alert("No path found!");
+      return;
+    }
+
+    let node = queue.shift();
+
+    // Mark as visited (thinking)
+    if (grid[node.y][node.x] === 'air') {
+      grid[node.y][node.x] = 'visited';
+      createGridMeshes();
+    }
+
+    if (node.x === goalPos.x && node.y === goalPos.y) {
+      clearInterval(interval);
+      highlightPath(node.path);
+      return;
+    }
+
+    for (let d of dirs) {
+      let nx = node.x + d.dx;
+      let ny = node.y + d.dy;
+      if (nx >= 0 && ny >= 0 && nx < GRID_SIZE && ny < GRID_SIZE) {
+        if (!visited[ny][nx] && (grid[ny][nx] === 'air' || grid[ny][nx] === 'goal')) {
+          visited[ny][nx] = true;
+          queue.push({x: nx, y: ny, path: [...node.path, {x: nx, y: ny}]});
+        }
+      }
+    }
+  }, 100); // 100ms per step
+}
+
+/* ====== EVENT HANDLERS ====== */
+renderer.domElement.addEventListener('click', (event) => {
+  const mouse = new THREE.Vector2(
+    (event.clientX / window.innerWidth) * 2 - 1,
+    -(event.clientY / window.innerHeight) * 2 + 1
+  );
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(mouse, camera);
+  const intersects = raycaster.intersectObjects(cubes);
+  if (intersects.length > 0) {
+    const {x, y} = intersects[0].object.userData;
+    if (grid[y][x] !== 'start' && grid[y][x] !== 'goal') {
+      toggleWall(x, y);
+    }
+  }
+});
+
+document.getElementById('findPath').addEventListener('click', bfsStepByStep);
+
+/* ====== CAMERA POSITION ====== */
+camera.position.set(GRID_SIZE / 2, 10, GRID_SIZE * 1.5);
+camera.lookAt(GRID_SIZE / 2, 0, GRID_SIZE / 2);
+
+/* ====== INIT ====== */
+createGridMeshes();
+
+/* ====== RENDER LOOP ====== */
+function animate() {
+  requestAnimationFrame(animate);
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>
